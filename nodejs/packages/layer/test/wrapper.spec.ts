@@ -168,6 +168,7 @@ describe('wrapper', async () => {
       delete (global as any).configureMeter;
       delete (global as any).configureLogger;
       delete (global as any).configureSdkRegistration;
+      delete (global as any).configureSdk;
     });
 
     it('use the propagator from configureSdkRegistration', async () => {
@@ -240,6 +241,63 @@ describe('wrapper', async () => {
       // collect() throws if NodeSDK did not register the reader.
       await reader.collect();
       await reader.shutdown();
+    });
+
+    it('create NodeSDK with the options from configureSdk', async () => {
+      const exporter = new InMemorySpanExporter();
+      delete (global as any).configureTracer;
+      delete (global as any).configureMeter;
+      delete (global as any).configureLogger;
+      delete (global as any).configureSdkRegistration;
+      global.configureSdk = config => ({
+        ...config,
+        idGenerator: {
+          generateTraceId: () => 'f'.repeat(32),
+          generateSpanId: () => 'e'.repeat(16),
+        },
+        spanProcessors: [new SimpleSpanProcessor({ exporter })],
+      });
+      await wrap();
+
+      trace.getTracer('test').startSpan('span').end();
+      const [span] = exporter.getFinishedSpans();
+      assert.strictEqual(span.spanContext().traceId, 'f'.repeat(32));
+      // The layer's resource detectors are still in the config.
+      assert.strictEqual(span.resource.attributes['process.pid'], process.pid);
+    });
+
+    it('pass what the deprecated hooks return to configureSdk', async () => {
+      process.env.OTEL_PROPAGATORS = 'tracecontext';
+      const propagator = new AWSXRayPropagator();
+      global.configureSdkRegistration = config => ({ ...config, propagator });
+      const configureSdkStub = stub().callsFake(config => config);
+      global.configureSdk = configureSdkStub;
+      await wrap();
+
+      assert(configureSdkStub.calledOnce);
+      assert.strictEqual(
+        configureSdkStub.firstCall.args[0].textMapPropagator,
+        propagator,
+      );
+      assert.deepEqual(propagation.fields(), ['x-amzn-trace-id']);
+    });
+
+    it('use NodeSDK options the other hooks do not offer', async () => {
+      const exporter = new InMemorySpanExporter();
+      delete (global as any).configureSdkRegistration;
+      global.configureSdk = config => ({
+        ...config,
+        serviceName: 'from-configure-sdk',
+        spanProcessors: [new SimpleSpanProcessor({ exporter })],
+      });
+      await wrap();
+
+      trace.getTracer('test').startSpan('span').end();
+      const [span] = exporter.getFinishedSpans();
+      assert.strictEqual(
+        span.resource.attributes['service.name'],
+        'from-configure-sdk',
+      );
     });
   });
 

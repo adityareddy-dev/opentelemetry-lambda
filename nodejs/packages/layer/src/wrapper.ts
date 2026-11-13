@@ -11,7 +11,7 @@ import {
 } from '@opentelemetry/api';
 import { diagLogLevelFromString, getStringFromEnv } from '@opentelemetry/core';
 import { getPropagator } from '@opentelemetry/auto-configuration-propagators';
-import { NodeSDK } from '@opentelemetry/sdk-node';
+import { NodeSDK, type NodeSDKConfiguration } from '@opentelemetry/sdk-node';
 import type { TracerProviderOptions } from '@opentelemetry/sdk-trace';
 import { envDetector, processDetector } from '@opentelemetry/resources';
 import { awsLambdaDetector } from '@opentelemetry/resource-detector-aws';
@@ -35,6 +35,10 @@ export interface SDKRegistrationConfig {
   contextManager?: ContextManager | null;
 }
 
+// Instrumentations are left out: NodeSDK registers them before it sets up the
+// providers, so the layer registers its own after start() instead.
+export type SdkConfig = Partial<Omit<NodeSDKConfiguration, 'instrumentations'>>;
+
 declare global {
   // In case of downstream configuring span processors etc
   function configureLambdaInstrumentation(
@@ -44,19 +48,28 @@ declare global {
     defaultConfig: AwsSdkInstrumentationConfig,
   ): AwsSdkInstrumentationConfig;
   function configureInstrumentations(): Instrumentation[];
+
+  // Gets the NodeSDK options the layer built, including what the deprecated
+  // hooks below returned, and returns the options to create NodeSDK with.
+  function configureSdk(defaultConfig: SdkConfig): SdkConfig;
+
+  /** @deprecated Use configureSdk. */
   function configureTracer(
     defaultConfig: TracerProviderOptions,
   ): TracerProviderOptions;
+  /** @deprecated Use configureSdk. */
   function configureSdkRegistration(
     defaultSdkRegistration: SDKRegistrationConfig,
   ): SDKRegistrationConfig;
 
   // No explicit metric type here, but "unknown" type.
   // Because metric packages are important dynamically.
+  /** @deprecated Use configureSdk. */
   function configureMeter(defaultConfig: unknown): unknown;
 
   // No explicit logger type here, but "unknown" type.
   // Because logger packages are important dynamically.
+  /** @deprecated Use configureSdk. */
   function configureLogger(defaultConfig: unknown): unknown;
 }
 
@@ -292,7 +305,7 @@ async function initializeSdk() {
     diag.disable();
   }
 
-  const sdk = new NodeSDK({
+  let sdkConfig: SdkConfig = {
     resource: tracerConfig.resource,
     autoDetectResources: true,
     resourceDetectors: [awsLambdaDetector, envDetector, processDetector],
@@ -306,7 +319,12 @@ async function initializeSdk() {
     metricReaders: nonEmpty(meterConfig.readers),
     views: meterConfig.views,
     logRecordProcessors: nonEmpty(loggerConfig.processors),
-  });
+  };
+  if (typeof configureSdk === 'function') {
+    sdkConfig = configureSdk(sdkConfig);
+  }
+
+  const sdk = new NodeSDK(sdkConfig);
   sdk.start();
 
   // Create instrumentations if they have not been created before
