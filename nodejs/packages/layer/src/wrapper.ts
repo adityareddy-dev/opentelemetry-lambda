@@ -297,7 +297,8 @@ async function initializeSdk() {
     autoDetectResources: true,
     resourceDetectors: [awsLambdaDetector, envDetector, processDetector],
     textMapPropagator,
-    contextManager: sdkRegistrationConfig.contextManager ?? undefined,
+    // NodeSDK treats null as "leave the context manager unset", as register() did.
+    contextManager: sdkRegistrationConfig.contextManager as ContextManager,
     sampler: tracerConfig.sampler,
     spanLimits: tracerConfig.spanLimits,
     idGenerator: tracerConfig.idGenerator,

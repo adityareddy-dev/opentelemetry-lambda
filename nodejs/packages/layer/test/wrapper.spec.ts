@@ -1,6 +1,8 @@
 import { init, wrap, unwrap } from '../src/wrapper';
 
 import {
+  context,
+  createContextKey,
   propagation,
   ProxyTracerProvider,
   ROOT_CONTEXT,
@@ -185,6 +187,21 @@ describe('wrapper', async () => {
       await wrap();
 
       assert.deepEqual(propagation.fields(), ['x-amzn-trace-id']);
+    });
+
+    it('leave the context manager unset when configureSdkRegistration returns null', async () => {
+      global.configureSdkRegistration = config => ({
+        ...config,
+        contextManager: null,
+      });
+      await wrap();
+
+      const key = createContextKey('test');
+      const ctx = ROOT_CONTEXT.setValue(key, 'value');
+      assert.strictEqual(
+        context.with(ctx, () => context.active()),
+        ROOT_CONTEXT,
+      );
     });
 
     it('merge the resource from configureTracer with the detected one', async () => {
